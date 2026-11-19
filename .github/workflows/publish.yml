@@ -1,0 +1,71 @@
+name: Publish
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. v1.0.0). Defaults to the version in package.json.'
+        type: string
+        required: false
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 1.0.0). Leave empty to publish the version already in package.json.'
+        type: string
+        required: false
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Determine version
+        id: version
+        run: |
+          # Called from the release flow or a manual dispatch: an explicit
+          # version input wins. On a tag push, the tag is the version.
+          # Otherwise publish the version already in package.json.
+          if [ -n "$EXPLICIT_VERSION" ]; then
+            echo "set-version=true" >> "$GITHUB_OUTPUT"
+            echo "version=$EXPLICIT_VERSION" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF_NAME" == v* ]]; then
+            echo "set-version=true" >> "$GITHUB_OUTPUT"
+            echo "version=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "set-version=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          EXPLICIT_VERSION: ${{ inputs.version }}
+
+      - name: Sync package version
+        if: steps.version.outputs.set-version == 'true'
+        run: npm version "${VERSION#v}" --no-git-tag-version --allow-same-version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish sonarlint-mcp
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

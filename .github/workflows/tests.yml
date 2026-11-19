@@ -1,0 +1,44 @@
+name: Tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Restore engine cache
+        # The SonarQube for IDE language server + analyzers (~180 MB) are
+        # fetched by the postinstall hook into ./sonarlint. Restoring the
+        # cache makes npm ci skip the download entirely; a miss just costs
+        # one download. CI uses whatever engine version is cached; refresh
+        # locally with `npm run setup -- --force` if you want a newer one.
+        uses: actions/cache@v4
+        with:
+          path: sonarlint
+          key: sonarlint-engine-${{ runner.os }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Engine smoke test
+        run: npm run smoke
+
+      - name: MCP protocol smoke test
+        run: node scripts/mcp-smoke.mjs

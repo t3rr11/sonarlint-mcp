@@ -257,4 +257,14 @@ node scripts/mcp-smoke.mjs   # full MCP protocol round-trip (spawns the server)
 
 To update the bundled engine and analyzers, run `npm run setup -- --force`: it fetches the latest `sonarlint-vscode` release and refreshes the cache manifest (`sonarlint/manifest.json`).
 
-To publish a release, run `npm publish` (the `files` whitelist keeps the ~180 MB engine cache out of the package; `npm pack --dry-run` shows what will ship).
+## Release pipeline
+
+GitHub Actions handle testing and publishing:
+
+- **Tests** (`tests.yml`) runs on every pull request: installs dependencies (restoring the engine cache when available), builds, and runs both smoke tests.
+- **Create Release** (`create-release.yml`) is triggered manually from the Actions tab with a version tag (e.g. `v1.0.0`) and optional notes. It creates the tag and a draft GitHub release, then dispatches publishing.
+- **Publish** (`publish.yml`) runs on release dispatch, manual dispatch, or a manually pushed `v*` tag: it builds and publishes to npm, syncing `package.json` to the tag version.
+
+Publishing authenticates with the `NPM_TOKEN` repository secret (a granular npm access token scoped to this package).
+
+To publish a release by hand instead, run `npm publish` (the `files` whitelist keeps the ~180 MB engine cache out of the package; `npm pack --dry-run` shows what will ship).
