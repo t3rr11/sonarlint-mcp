@@ -198,6 +198,7 @@ export class SonarLintEngine {
     opened: { uri: string; time: number }[],
     done: Set<string>,
     deadline: number,
+    signal?: AbortSignal,
   ): Promise<void> {
     return new Promise((resolve) => {
       let finished = false;
@@ -210,6 +211,7 @@ export class SonarLintEngine {
         resolve();
       };
       const check = (): boolean => {
+        if (signal?.aborted) return true;
         const now = Date.now();
         if (now > deadline) return true;
         const engineQuiet =
@@ -235,7 +237,11 @@ export class SonarLintEngine {
     });
   }
 
-  async analyze(paths: string[], timeoutMs = DEFAULT_SCAN_TIMEOUT_MS): Promise<ScanResult> {
+  async analyze(
+    paths: string[],
+    timeoutMs = DEFAULT_SCAN_TIMEOUT_MS,
+    signal?: AbortSignal,
+  ): Promise<ScanResult> {
     if (paths.length === 0) {
       return { root: "", files: [], totalIssues: 0, timedOut: false };
     }
@@ -249,51 +255,17 @@ export class SonarLintEngine {
     let totalOpened = 0;
 
     for (let i = 0; i < paths.length; i += ANALYZE_BATCH_SIZE) {
-      const batch = paths.slice(i, i + ANALYZE_BATCH_SIZE);
-
+      if (signal?.aborted) break;
       // eslint-disable-next-line sonarjs/no-await-in-loop -- sequential batches are intentional: they bound memory and limit load on the SonarLint LSP server
-      const entries = await Promise.all( 
-        batch.map(async (p) => {
-          const abs = path.resolve(p);
-          const uri = pathToFileURL(abs).href;
-          try {
-            const text = await readFile(abs, "utf8");
-            return { abs, uri, text, lang: languageIdFor(abs) };
-          } catch (e: any) {
-            return { abs, uri, text: null, lang: "plaintext", error: e?.message ?? String(e) };
-          }
-        }),
+      totalOpened += await this.processBatch(
+        paths.slice(i, i + ANALYZE_BATCH_SIZE),
+        client,
+        root,
+        results,
+        done,
+        deadline,
+        signal,
       );
-
-      const opened: { uri: string; time: number }[] = [];
-      for (const e of entries) {
-        if (e.text === null) {
-          results.set(e.uri, { file: path.relative(root, e.abs), issues: [], error: e.error });
-          continue;
-        }
-        this.diagnostics.delete(e.uri);
-        this.openUris.add(e.uri);
-        client.notify("textDocument/didOpen", {
-          textDocument: { uri: e.uri, languageId: e.lang, version: 1, text: e.text },
-        });
-        opened.push({ uri: e.uri, time: Date.now() });
-      }
-      totalOpened += opened.length;
-
-      if (opened.length > 0) {
-        // eslint-disable-next-line sonarjs/no-await-in-loop -- sequential batches are intentional: they bound memory and limit load on the SonarLint LSP server
-        await this.waitForDiagnostics(opened, done, deadline); 
-      }
-
-      for (const e of entries) {
-        if (e.text === null) continue;
-        this.openUris.delete(e.uri);
-        client.notify("textDocument/didClose", { textDocument: { uri: e.uri } });
-        results.set(e.uri, {
-          file: path.relative(root, e.abs),
-          issues: this.diagnostics.get(e.uri) ?? [],
-        });
-      }
     }
 
     const files = paths.map((p) => {
@@ -303,6 +275,59 @@ export class SonarLintEngine {
 
     const totalIssues = files.reduce((n, f) => n + f.issues.length, 0);
     return { root, files, totalIssues, timedOut: done.size < totalOpened };
+  }
+
+  private async processBatch(
+    batch: string[],
+    client: LspClient,
+    root: string,
+    results: Map<string, FileResult>,
+    done: Set<string>,
+    deadline: number,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const entries = await Promise.all(
+      batch.map(async (p) => {
+        const abs = path.resolve(p);
+        const uri = pathToFileURL(abs).href;
+        try {
+          const text = await readFile(abs, "utf8");
+          return { abs, uri, text, lang: languageIdFor(abs) };
+        } catch (e: any) {
+          return { abs, uri, text: null, lang: "plaintext", error: e?.message ?? String(e) };
+        }
+      }),
+    );
+
+    const opened: { uri: string; time: number }[] = [];
+    for (const e of entries) {
+      if (e.text === null) {
+        results.set(e.uri, { file: path.relative(root, e.abs), issues: [], error: e.error });
+        continue;
+      }
+      this.diagnostics.delete(e.uri);
+      this.openUris.add(e.uri);
+      client.notify("textDocument/didOpen", {
+        textDocument: { uri: e.uri, languageId: e.lang, version: 1, text: e.text },
+      });
+      opened.push({ uri: e.uri, time: Date.now() });
+    }
+
+    if (opened.length > 0) {
+      // eslint-disable-next-line sonarjs/no-await-in-loop -- sequential batches are intentional: they bound memory and limit load on the SonarLint LSP server
+      await this.waitForDiagnostics(opened, done, deadline, signal);
+    }
+
+    for (const e of entries) {
+      if (e.text === null) continue;
+      this.openUris.delete(e.uri);
+      client.notify("textDocument/didClose", { textDocument: { uri: e.uri } });
+      results.set(e.uri, {
+        file: path.relative(root, e.abs),
+        issues: this.diagnostics.get(e.uri) ?? [],
+      });
+    }
+    return opened.length;
   }
 
   async listRules(): Promise<unknown> {

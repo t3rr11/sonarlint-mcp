@@ -31,6 +31,12 @@ export class LspClient {
     });
     this.proc = proc;
 
+    // EXPLAIN: If the language server dies while a write is still queued, the stdin
+    // socket can emit an unhandled "error" event and crash the MCP server.
+    // Pending requests are already rejected via the exit handler below.
+    // So we can safely ignore errors on the stdin stream to prevent crashes.
+    proc.stdin?.on("error", () => {});
+
     proc.stdout.on("data", (chunk: Buffer) => this.onData(chunk));
     proc.stderr.on("data", (chunk: Buffer) => {
       const text = chunk.toString();

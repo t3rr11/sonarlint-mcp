@@ -1,6 +1,6 @@
 {
   "name": "sonarlint-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MCP server exposing local SonarQube for IDE (SonarLint) static analysis: scan files, folders, or whole projects",
   "type": "module",
   "main": "dist/index.js",

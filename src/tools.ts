@@ -62,9 +62,9 @@ export function registerTools(server: McpServer, engine: SonarLintEngine): void 
         path: z.string().describe("File to analyze (absolute or relative to the workspace root)"),
       },
     },
-    async ({ path: p }) => {
+    async ({ path: p }, extra) => {
       const abs = resolveWorkspacePath(p, "file");
-      const result = await engine.analyze([abs], DEFAULT_SCAN_TIMEOUT_MS);
+      const result = await engine.analyze([abs], DEFAULT_SCAN_TIMEOUT_MS, extra?.signal);
       const f = result.files[0];
       return textResponse({
         file: f?.file,
@@ -97,13 +97,13 @@ export function registerTools(server: McpServer, engine: SonarLintEngine): void 
           .describe("Maximum number of files to scan (default 400)"),
       },
     },
-    async ({ folder, maxFiles }) => {
+    async ({ folder, maxFiles }, extra) => {
       const dir = resolveWorkspacePath(folder ?? process.cwd(), "folder");
       const files = await collectFiles(dir, { maxFiles: maxFiles ?? DEFAULT_MAX_FOLDER_FILES });
       if (files.length === 0) {
         return textResponse({ target: dir, filesScanned: 0, note: "No analyzable files found" });
       }
-      const result = await engine.analyze(files, DEFAULT_SCAN_TIMEOUT_MS);
+      const result = await engine.analyze(files, DEFAULT_SCAN_TIMEOUT_MS, extra?.signal);
       return textResponse(summarizeScan(result, dir));
     },
   );
@@ -125,13 +125,13 @@ export function registerTools(server: McpServer, engine: SonarLintEngine): void 
           .describe("Maximum number of files to scan (default 1000)"),
       },
     },
-    async ({ maxFiles }) => {
+    async ({ maxFiles }, extra) => {
       const root = path.resolve(process.cwd());
       const files = await collectFiles(root, { maxFiles: maxFiles ?? DEFAULT_MAX_PROJECT_FILES });
       if (files.length === 0) {
         return textResponse({ target: root, filesScanned: 0, note: "No analyzable files found" });
       }
-      const result = await engine.analyze(files, DEFAULT_SCAN_TIMEOUT_MS);
+      const result = await engine.analyze(files, DEFAULT_SCAN_TIMEOUT_MS, extra?.signal);
       return textResponse(summarizeScan(result, root));
     },
   );
